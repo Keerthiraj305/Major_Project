@@ -1,0 +1,55 @@
+MODEL UPDATE AND PRIVACY PRESERVATION (CKD FL PROJECT)
+=====================================================
+
+1) OVERALL IDEA
+- This project uses Federated Learning (FL): each client trains on its own local data.
+- Only model updates are shared for aggregation, not raw patient records.
+
+2) MODEL UPDATION FLOW (STEP BY STEP)
+A. Global model initialization
+- Admin initializes a base global model.
+- In web app flow this is handled in App/backend/services/fl_service.py (initialize_global_model).
+
+B. Client local training
+- Each client loads the current global model as a starting point.
+- Client trains locally on its uploaded dataset.
+- After training, the system computes delta = (local_weights - global_weights).
+
+C. Delta storage and status update
+- Client delta is saved (example: delta.pt / delta_final.pt depending on flow).
+- Client status is marked as "New Update Available" for aggregation.
+
+D. Federated aggregation (FedAvg)
+- Server collects available client deltas.
+- Server averages deltas (FedAvg) and applies them to global model.
+- New global model is saved as next round model.
+
+E. Redistribution
+- Updated global model copy is distributed/saved for clients to use in next round.
+
+3) PRIVACY PRESERVATION (HOW IT HAPPENS)
+A. Data never centrally pooled
+- Raw client datasets are not merged into a central training dataset.
+- Each client trains on its own local data.
+
+B. Differential Privacy during local training
+- Gradient clipping: limits influence of any one sample on gradient magnitude.
+- Gaussian noise addition: random noise is added to gradients before optimizer step.
+- This reduces leakage risk from updates.
+
+C. Shared object is update, not records
+- What moves for FL is model update (delta), not patient rows.
+
+4) WHERE IT IS IMPLEMENTED
+- Web FL service: App/backend/services/fl_service.py
+  - train_client_model: local training + DP + delta save
+  - aggregate_models: FedAvg aggregation and global model update
+
+- Script pipeline:
+  - FL-DP-Healthcare/client_train_once.py (local train + DP + delta)
+  - FL-DP-Healthcare/dp.py (clip_gradients, add_gaussian_noise)
+  - FL-DP-Healthcare/aggregate_once.py (FedAvg + global model update + redistribute)
+
+5) SIMPLE ONE-LINE SUMMARY
+- Update = local train -> create delta -> server averages deltas -> new global model.
+- Privacy = local data stays local + DP (clip + noise) on client-side training.
