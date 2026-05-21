@@ -898,6 +898,7 @@
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('clients')">Clients</button>
                 <button class="tab" onclick="switchTab('global')">Global Model</button>
+                <button class="tab" onclick="switchTab('versions')">Model Versions</button>
                 <button class="tab" onclick="switchTab('history')">Aggregation History</button>
                 <button class="tab" onclick="switchTab('activities')">Activities</button>
             </div>
@@ -953,6 +954,17 @@
             <div id="activitiesTab" class="tab-content">
                 <h2 class="section-title" style="margin-bottom: 1.5rem;">Recent Activities</h2>
                 <div id="activitiesTable"></div>
+            </div>
+            
+            <!-- Model Versions Tab -->
+            <div id="versionsTab" class="tab-content">
+                <div class="section-header">
+                    <h2 class="section-title">Model Versions</h2>
+                    <div class="action-buttons">
+                        <button class="btn-secondary" onclick="loadModelVersions()">Refresh</button>
+                    </div>
+                </div>
+                <div id="modelVersionsTable"></div>
             </div>
         </div>
     </div>
@@ -1571,10 +1583,92 @@
             if (tab === 'global') {
                 loadGlobalMetrics();
                 loadAggregationCandidates();
+                } else if (tab === 'versions') {
+                    loadModelVersions();
             } else if (tab === 'history') {
                 loadAggregationHistory();
             }
         }
+
+            async function loadModelVersions() {
+                try {
+                    const response = await fetch('/api/admin/global-model/versions', {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    if (!response.ok) {
+                        document.getElementById('modelVersionsTable').innerHTML = '<p style="color:#ef4444;padding:1rem;">Failed to load model versions.</p>';
+                        return;
+                    }
+
+                    const versions = await response.json();
+                    if (!versions || versions.length === 0) {
+                        document.getElementById('modelVersionsTable').innerHTML = '<p style="color: #64748b; text-align: center; padding: 2rem;">No model versions recorded yet.</p>';
+                        return;
+                    }
+
+                    const html = `
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Tag</th>
+                                    <th>Round</th>
+                                    <th>Accuracy</th>
+                                    <th>Loss</th>
+                                    <th>Notes</th>
+                                    <th>Created At</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${versions.map(v => `
+                                    <tr>
+                                        <td><strong>${v.version_tag}</strong></td>
+                                        <td>${v.round_number ?? '-'}</td>
+                                        <td>${v.accuracy !== null && v.accuracy !== undefined ? (v.accuracy * 100).toFixed(2) + '%' : 'N/A'}</td>
+                                        <td>${v.loss !== null && v.loss !== undefined ? Number(v.loss).toFixed(4) : 'N/A'}</td>
+                                        <td style="max-width:300px;">${v.notes || ''}</td>
+                                        <td>${v.created_at ? new Date(v.created_at).toLocaleString() : '-'}</td>
+                                        <td>
+                                            <div class="action-buttons">
+                                                <button class="btn-primary" onclick="downloadModelVersion(${v.id}, '${v.version_tag}')">Download</button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    `;
+                    document.getElementById('modelVersionsTable').innerHTML = html;
+                } catch (error) {
+                    console.error('Error loading model versions:', error);
+                    document.getElementById('modelVersionsTable').innerHTML = '<p style="color:#ef4444;padding:1rem;">Failed to load model versions.</p>';
+                }
+            }
+
+            async function downloadModelVersion(versionId, versionTag) {
+                try {
+                    const response = await fetch(`/api/admin/global-model/versions/${versionId}/download`, {
+                        headers: { 'Authorization': `Bearer ${token}` }
+                    });
+                    if (!response.ok) {
+                        alert('Failed to download model version');
+                        return;
+                    }
+
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `${versionTag}.pt`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    window.URL.revokeObjectURL(url);
+                } catch (error) {
+                    console.error('Download error:', error);
+                    alert('Error downloading model file');
+                }
+            }
 
         async function loadAggregationHistory() {
             try {
