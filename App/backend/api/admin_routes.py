@@ -17,8 +17,26 @@ from backend.core.auth import (
     get_current_user, log_audit, hash_password
 )
 from backend.core.database import get_db_connection
-from backend.services.fl_service import FederatedLearningService
 from backend.services.email_service import email_service
+from fastapi.responses import FileResponse
+from pathlib import Path
+
+# Lazy-load FederatedLearningService to avoid heavy imports at module import time
+_fl_service = None
+
+def get_fl_service():
+    global _fl_service
+    if _fl_service is not None:
+        return _fl_service
+    try:
+        from backend.services.fl_service import FederatedLearningService
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Federated Learning service unavailable: {str(e)}"
+        )
+    _fl_service = FederatedLearningService()
+    return _fl_service
 
 def require_admin_backend_enabled():
     if os.getenv("ADMIN_FRONTEND_ONLY", "false").lower() == "true":
@@ -33,7 +51,6 @@ router = APIRouter(
     tags=["Admin"],
     dependencies=[Depends(require_admin_backend_enabled)]
 )
-fl_service = FederatedLearningService()
 
 @router.post("/login", response_model=Token)
 async def admin_login(credentials: AdminLogin):
@@ -568,8 +585,8 @@ async def reset_global_model(
     conn.commit()
     conn.close()
 
-    global_model_path = fl_service.get_global_model_path()
-    scaler_path = fl_service.models_dir / "scaler.pkl"
+    global_model_path = get_fl_service().get_global_model_path()
+    scaler_path = get_fl_service().models_dir / "scaler.pkl"
 
     if global_model_path.exists():
         global_model_path.unlink()
@@ -577,7 +594,7 @@ async def reset_global_model(
     if scaler_path.exists():
         scaler_path.unlink()
 
-    for client_dir in fl_service.models_dir.glob("client_*"):
+    for client_dir in get_fl_service().models_dir.glob("client_*"):
         for model_file in client_dir.glob("*.pt"):
             model_file.unlink()
 
@@ -609,7 +626,7 @@ async def initialize_global_model(
             detail="Invalid admin password"
         )
 
-    result = fl_service.initialize_global_model(
+    result = get_fl_service().initialize_global_model(
         template_csv=template_csv,
         epochs=epochs,
         batch_size=batch_size,
@@ -642,7 +659,7 @@ async def aggregate_models(
         print(f"[AGGREGATION] Starting aggregation for client_ids: {request.client_ids}")
         print(f"[AGGREGATION] Current user: {current_user}")
         
-        result = fl_service.aggregate_models(client_ids=request.client_ids)
+        result = get_fl_service().aggregate_models(client_ids=request.client_ids)
         
         print(f"[AGGREGATION] Result status: {result['status']}")
         print(f"[AGGREGATION] Result: {result}")
@@ -768,6 +785,54 @@ async def get_global_metrics(current_user: dict = Depends(require_admin)):
         active_clients=active_clients,
         last_aggregation=agg["created_at"] if agg else None
     )
+
+
+@router.get("/global-model/versions")
+async def list_model_versions(current_user: dict = Depends(require_admin)):
+    """List saved global model versions"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, version_tag, round_number, file_path, notes, accuracy, loss, created_at
+        FROM model_versions
+        ORDER BY created_at DESC
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+
+    versions = []
+    for r in rows:
+        versions.append({
+            "id": r[0],
+            "version_tag": r[1],
+            "round_number": r[2],
+            "file_path": r[3],
+            "notes": r[4],
+            "accuracy": r[5],
+            "loss": r[6],
+            "created_at": r[7]
+        })
+
+    return versions
+
+
+@router.get("/global-model/versions/{version_id}/download")
+async def download_model_version(version_id: int, current_user: dict = Depends(require_admin)):
+    """Download a specific model version file"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT file_path FROM model_versions WHERE id = ?", (version_id,))
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model version not found")
+
+    file_path = Path(row[0])
+    if not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Model file not found on disk")
+
+    return FileResponse(path=str(file_path), filename=file_path.name, media_type='application/octet-stream')
 
 @router.delete("/clients/{client_id}")
 async def delete_client(

@@ -19,11 +19,26 @@ from backend.core.auth import (
     verify_training_password, log_audit
 )
 from backend.core.database import get_db_connection
-from backend.services.fl_service import FederatedLearningService
 from backend.services.email_service import email_service
 
+# Lazy-load FederatedLearningService to avoid heavy imports at module import time
+_fl_service = None
+
+def get_fl_service():
+    global _fl_service
+    if _fl_service is not None:
+        return _fl_service
+    try:
+        from backend.services.fl_service import FederatedLearningService
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Federated Learning service unavailable: {str(e)}"
+        )
+    _fl_service = FederatedLearningService()
+    return _fl_service
+
 router = APIRouter(prefix="/api/client", tags=["Client"])
-fl_service = FederatedLearningService()
 
 @router.post("/login", response_model=Token)
 async def client_login(credentials: ClientLogin):
@@ -240,7 +255,7 @@ async def train_model(
     template_csv = str(Path(__file__).parent.parent.parent.parent / "Datasets" / "chronic_kidney_disease_5000.csv")
     
     # Train model
-    result = fl_service.train_client_model(
+    result = get_fl_service().train_client_model(
         client_id=client_id,
         dataset_path=dataset["dataset_path"],
         config=config,
@@ -291,7 +306,7 @@ async def predict_single(
     
     template_csv = str(Path(__file__).parent.parent.parent.parent / "Datasets" / "chronic_kidney_disease_5000.csv")
     
-    result = fl_service.predict(
+    result = get_fl_service().predict(
         client_id=client_id,
         patient_data=prediction_data.patient_data,
         template_csv=template_csv
@@ -342,7 +357,7 @@ async def predict_batch(
         predictions = []
         for idx, row in df.iterrows():
             patient_data = row.to_dict()
-            result = fl_service.predict(
+            result = get_fl_service().predict(
                 client_id=client_id,
                 patient_data=patient_data,
                 template_csv=template_csv

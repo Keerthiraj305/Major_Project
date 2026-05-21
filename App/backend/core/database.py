@@ -224,6 +224,22 @@ def init_database():
             INSERT INTO global_model (round_number, model_path)
             VALUES (?, ?)
         """, (0, None))
+
+    # Model versions table for versioning and changelog
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='model_versions'")
+    if not cursor.fetchone():
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS model_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                version_tag TEXT,
+                round_number INTEGER,
+                file_path TEXT,
+                notes TEXT,
+                accuracy REAL,
+                loss REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
     
     conn.commit()
     conn.close()

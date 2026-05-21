@@ -77,6 +77,25 @@ class FederatedLearningService:
     def save_model(self, model: nn.Module, path: str):
         """Save model to file"""
         torch.save(model.state_dict(), path)
+
+    def record_model_version(self, file_path: str, round_number: int = 0, accuracy: Optional[float] = None, loss: Optional[float] = None, notes: Optional[str] = None):
+        """Record a model version entry in the database"""
+        try:
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            # Create a simple version tag using timestamp
+            import time
+            version_tag = f"v{int(time.time())}"
+            cursor.execute("""
+                INSERT INTO model_versions (version_tag, round_number, file_path, notes, accuracy, loss)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (version_tag, round_number, str(file_path), notes, accuracy, loss))
+            conn.commit()
+            conn.close()
+            return {"status": "success", "version_tag": version_tag}
+        except Exception as e:
+            print(f"[VERSIONING] Failed to record model version: {e}")
+            return {"status": "error", "message": str(e)}
     
     def load_model(self, model: nn.Module, path: str) -> nn.Module:
         """Load model from file"""
@@ -145,6 +164,14 @@ class FederatedLearningService:
             # Save global model
             global_model_path = self.get_global_model_path()
             self.save_model(model, str(global_model_path))
+            # Record version entry for the initialized global model
+            try:
+                self.record_model_version(global_model_path, round_number=0,
+                                          accuracy=val_metrics.get('accuracy', None),
+                                          loss=val_metrics.get('loss', None),
+                                          notes='Initialized global model')
+            except Exception:
+                pass
             
             # Save scaler for later use
             scaler_path = self.models_dir / "scaler.pkl"
@@ -495,6 +522,14 @@ class FederatedLearningService:
                     
                     # Save the model (either improved or rolled back)
                     self.save_model(global_model, str(global_model_path))
+                # Record the new global model version
+                try:
+                    self.record_model_version(global_model_path, round_number=new_round,
+                                              accuracy=global_accuracy,
+                                              loss=global_loss,
+                                              notes=f'Aggregation round {new_round}')
+                except Exception:
+                    pass
                 else:
                     print(f"[AGGREGATION] Warning: No validation data available for evaluation")
                     # Save model anyway if no validation data
